@@ -4,8 +4,8 @@ import telegram
 import os
 
 # Prezzi di riferimento
-PREZZO_ATTUALE_LUCE = 0.1232
-PREZZO_ATTUALE_GAS = 0.453
+PREZZO_ATTUALE_LUCE = 0.15
+PREZZO_ATTUALE_GAS = 0.50
 
 # Token e chat_id di Telegram dalle variabili d'ambiente
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
