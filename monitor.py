@@ -16,22 +16,24 @@ def estrai_prezzi():
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Debug: stampa l'intera pagina HTML
-    print("DEBUG: Inizio contenuto HTML")
-    print(soup.prettify())
+    # Debug: stampa l'intera pagina HTML (solo le prime 50 righe)
+    print("DEBUG: Inizio contenuto HTML (prime 50 righe)")
+    lines = soup.prettify().split('\n')
+    for i, line in enumerate(lines[:50]):
+        print(f"{i+1:02d}: {line}")
     print("DEBUG: Fine contenuto HTML")
 
-    # Debug: stampa tutti gli h2 trovati
-    h2_tags = soup.find_all('h2')
-    print("DEBUG: Trovati h2:", len(h2_tags))
-    for idx, h2 in enumerate(h2_tags):
-        print(f"h2[{idx}]: {h2.get_text()}")
+    # Debug: stampa tutti gli heading trovati
+    headings = soup.find_all(['h1', 'h2', 'h3', 'h4'])
+    print(f"DEBUG: Trovati {len(headings)} headings totali.")
+    for idx, tag in enumerate(headings):
+        print(f"heading[{idx}]: {tag.get_text().strip()}")
 
-    # Prova a trovare la sezione "Octopus Fissa 12M"
+    # Cerca la sezione "Octopus Fissa 12M" in qualsiasi heading
     sezione_fissa = None
-    for h2 in h2_tags:
-        if 'Octopus Fissa 12M' in h2.get_text():
-            sezione_fissa = h2
+    for tag in headings:
+        if 'Octopus Fissa 12M' in tag.get_text():
+            sezione_fissa = tag
             break
 
     if not sezione_fissa:
