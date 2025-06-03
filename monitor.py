@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-import telegram
+import re
 import os
 
 # Prezzi di riferimento
@@ -16,20 +16,8 @@ def estrai_prezzi():
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Debug: stampa l'intera pagina HTML (solo le prime 50 righe)
-    print("DEBUG: Inizio contenuto HTML (prime 50 righe)")
-    lines = soup.prettify().split('\n')
-    for i, line in enumerate(lines[:50]):
-        print(f"{i+1:02d}: {line}")
-    print("DEBUG: Fine contenuto HTML")
-
-    # Debug: stampa tutti gli heading trovati
+    # Trova la sezione "Octopus Fissa 12M"
     headings = soup.find_all(['h1', 'h2', 'h3', 'h4'])
-    print(f"DEBUG: Trovati {len(headings)} headings totali.")
-    for idx, tag in enumerate(headings):
-        print(f"heading[{idx}]: {tag.get_text().strip()}")
-
-    # Cerca la sezione "Octopus Fissa 12M" in qualsiasi heading
     sezione_fissa = None
     for tag in headings:
         if 'Octopus Fissa 12M' in tag.get_text():
@@ -43,15 +31,21 @@ def estrai_prezzi():
     if not contenitore:
         raise ValueError("Contenitore dettagli tariffa non trovato.")
 
-    # Stampa contenuto trovato per debug
+    testo = contenitore.get_text()
     print("DEBUG: Contenitore testo:")
-    print(contenitore.get_text())
+    print(testo)
 
-    # Estraggo prezzi placeholder (li sistemeremo dopo)
-    prezzo_luce = 0.12
-    prezzo_gas = 0.45
+    # Parsing dei prezzi con regex
+    prezzo_luce = re.search(r'Materia prima:([0-9.,]+)\s*€/kWh', testo)
+    prezzo_gas = re.search(r'Materia prima:([0-9.,]+)\s*€/Smc', testo)
 
-    return prezzo_luce, prezzo_gas
+    if not prezzo_luce or not prezzo_gas:
+        raise ValueError("Prezzi non trovati nella sezione.")
+
+    prezzo_luce_val = float(prezzo_luce.group(1).replace(',', '.'))
+    prezzo_gas_val = float(prezzo_gas.group(1).replace(',', '.'))
+
+    return prezzo_luce_val, prezzo_gas_val
 
 # Controllo prezzi
 try:
@@ -64,10 +58,12 @@ try:
     if prezzo_gas < PREZZO_ATTUALE_GAS:
         messaggi.append(f"🔥 Prezzo gas sceso a {prezzo_gas:.4f} €/Smc!")
 
-    # Invio notifica Telegram
+    # Invio notifica Telegram via requests
     if messaggi and TELEGRAM_TOKEN and CHAT_ID:
-        bot = telegram.Bot(token=TELEGRAM_TOKEN)
         for messaggio in messaggi:
-            bot.send_message(chat_id=CHAT_ID, text=messaggio)
+            requests.post(
+                f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
+                data={'chat_id': CHAT_ID, 'text': messaggio}
+            )
 except Exception as e:
     print(f"Errore durante l'esecuzione dello script: {e}")
