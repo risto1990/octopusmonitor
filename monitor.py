@@ -4,8 +4,8 @@ import telegram
 import os
 
 # Prezzi di riferimento
-PREZZO_ATTUALE_LUCE = 0.15
-PREZZO_ATTUALE_GAS = 0.50
+PREZZO_ATTUALE_LUCE = 0.1232
+PREZZO_ATTUALE_GAS = 0.453
 
 # Token e chat_id di Telegram dalle variabili d'ambiente
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -16,35 +16,38 @@ def estrai_prezzi():
     response = requests.get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Trova la sezione della tariffa "Octopus Fissa 12M"
-    sezione_fissa = soup.find('h2', string='Octopus Fissa 12M')
+    # Debug: stampa l'intera pagina HTML
+    print("DEBUG: Inizio contenuto HTML")
+    print(soup.prettify())
+    print("DEBUG: Fine contenuto HTML")
+
+    # Debug: stampa tutti gli h2 trovati
+    h2_tags = soup.find_all('h2')
+    print("DEBUG: Trovati h2:", len(h2_tags))
+    for idx, h2 in enumerate(h2_tags):
+        print(f"h2[{idx}]: {h2.get_text()}")
+
+    # Prova a trovare la sezione "Octopus Fissa 12M"
+    sezione_fissa = None
+    for h2 in h2_tags:
+        if 'Octopus Fissa 12M' in h2.get_text():
+            sezione_fissa = h2
+            break
+
     if not sezione_fissa:
         raise ValueError("Sezione 'Octopus Fissa 12M' non trovata.")
 
-    # Trova il contenitore dei dettagli della tariffa
     contenitore = sezione_fissa.find_next('div')
     if not contenitore:
         raise ValueError("Contenitore dettagli tariffa non trovato.")
 
-    # Estrai i prezzi di luce e gas
-    testo = contenitore.get_text()
-    prezzo_luce = None
-    prezzo_gas = None
+    # Stampa contenuto trovato per debug
+    print("DEBUG: Contenitore testo:")
+    print(contenitore.get_text())
 
-    for linea in testo.splitlines():
-        if 'Materia prima Luce' in linea:
-            try:
-                prezzo_luce = float(linea.split(':')[1].strip().replace('€/kWh', '').replace(',', '.'))
-            except:
-                pass
-        elif 'Materia prima Gas' in linea:
-            try:
-                prezzo_gas = float(linea.split(':')[1].strip().replace('€/Smc', '').replace(',', '.'))
-            except:
-                pass
-
-    if prezzo_luce is None or prezzo_gas is None:
-        raise ValueError("Prezzi non trovati nella sezione.")
+    # Estraggo prezzi placeholder (li sistemeremo dopo)
+    prezzo_luce = 0.12
+    prezzo_gas = 0.45
 
     return prezzo_luce, prezzo_gas
 
