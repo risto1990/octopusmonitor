@@ -3,9 +3,9 @@ from bs4 import BeautifulSoup
 import re
 import os
 
-# Prezzi di riferimento (soglie alte per test)
-PREZZO_ATTUALE_LUCE = 0.20
-PREZZO_ATTUALE_GAS = 0.60
+# Prezzi di riferimento reali
+PREZZO_ATTUALE_LUCE = 0.1232
+PREZZO_ATTUALE_GAS = 0.453
 
 # Token e chat_id di Telegram dalle variabili d'ambiente
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -47,19 +47,7 @@ def estrai_prezzi():
 
     return prezzo_luce_val, prezzo_gas_val
 
-def invia_messaggio_test():
-    print("DEBUG: Invio messaggio di test")
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("❌ TELEGRAM_TOKEN o CHAT_ID mancanti.")
-        return
-    test_message = "🔔 TEST: Il bot è attivo e funzionante. Questo è un messaggio di prova."
-    response = requests.post(
-        f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
-        data={'chat_id': CHAT_ID, 'text': test_message}
-    )
-    print(f"DEBUG: Response Telegram: {response.status_code} - {response.text}")
-
-# Controllo prezzi e test invio Telegram
+# Controllo prezzi e invio notifica se in calo
 try:
     prezzo_luce, prezzo_gas = estrai_prezzi()
     messaggi = []
@@ -81,8 +69,6 @@ try:
             data={'chat_id': CHAT_ID, 'text': messaggio}
         )
         print(f"DEBUG: Response Telegram: {response.status_code} - {response.text}")
-
-    invia_messaggio_test()
 
 except Exception as e:
     print(f"❌ Errore durante l'esecuzione dello script: {e}")
