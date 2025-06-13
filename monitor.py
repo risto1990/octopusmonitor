@@ -47,6 +47,18 @@ def estrai_prezzi():
 
     return prezzo_luce_val, prezzo_gas_val
 
+def invia_messaggio_test():
+    print("DEBUG: Invio messaggio di test")
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("❌ TELEGRAM_TOKEN o CHAT_ID mancanti.")
+        return
+    test_message = "🔔 TEST: Il bot è attivo e funzionante. Questo è un messaggio di prova."
+    response = requests.post(
+        f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
+        data={'chat_id': CHAT_ID, 'text': test_message}
+    )
+    print(f"DEBUG: Response Telegram: {response.status_code} - {response.text}")
+
 # Controllo prezzi e test invio Telegram
 try:
     prezzo_luce, prezzo_gas = estrai_prezzi()
@@ -63,13 +75,8 @@ try:
     print(f"DEBUG: CHAT_ID presente: {bool(CHAT_ID)}")
     print(f"DEBUG: Messaggi da inviare: {messaggi}")
 
-    if TELEGRAM_TOKEN and CHAT_ID:
-        test_message = "🔔 TEST: Il bot è attivo e funzionante. Questo è un messaggio di prova."
-        response = requests.post(
-            f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
-            data={'chat_id': CHAT_ID, 'text': test_message}
-        )
-        print(f"DEBUG: Response Telegram: {response.status_code} - {response.text}")
+    # Invia il messaggio di test indipendentemente dai prezzi
+    invia_messaggio_test()
 
 except Exception as e:
-    print(f"Errore durante l'esecuzione dello script: {e}")
+    print(f"❌ Errore durante l'esecuzione dello script: {e}")
