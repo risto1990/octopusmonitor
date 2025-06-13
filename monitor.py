@@ -47,7 +47,7 @@ def estrai_prezzi():
 
     return prezzo_luce_val, prezzo_gas_val
 
-# Controllo prezzi
+# Controllo prezzi e test invio Telegram
 try:
     prezzo_luce, prezzo_gas = estrai_prezzi()
     messaggi = []
@@ -58,21 +58,18 @@ try:
     if prezzo_gas < PREZZO_ATTUALE_GAS:
         messaggi.append(f"🔥 Prezzo gas sceso a {prezzo_gas:.4f} €/Smc!")
 
-    # Invio notifica Telegram via requests
-    if messaggi and TELEGRAM_TOKEN and CHAT_ID:
-        for messaggio in messaggi:
-            requests.post(
-                f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
-                data={'chat_id': CHAT_ID, 'text': messaggio}
-            )
+    print(f"DEBUG: Prezzo luce: {prezzo_luce}, Prezzo gas: {prezzo_gas}")
+    print(f"DEBUG: TELEGRAM_TOKEN presente: {bool(TELEGRAM_TOKEN)}")
+    print(f"DEBUG: CHAT_ID presente: {bool(CHAT_ID)}")
+    print(f"DEBUG: Messaggi da inviare: {messaggi}")
+
+    if TELEGRAM_TOKEN and CHAT_ID:
+        test_message = "🔔 TEST: Il bot è attivo e funzionante. Questo è un messaggio di prova."
+        response = requests.post(
+            f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
+            data={'chat_id': CHAT_ID, 'text': test_message}
+        )
+        print(f"DEBUG: Response Telegram: {response.status_code} - {response.text}")
+
 except Exception as e:
     print(f"Errore durante l'esecuzione dello script: {e}")
-    print("DEBUG: Invio messaggio di test Telegram")
-try:
-    test_message = "🔔 TEST: Il bot è attivo e funzionante. Questo è un messaggio di prova."
-    requests.post(
-        f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
-        data={'chat_id': CHAT_ID, 'text': test_message}
-    )
-except Exception as e:
-    print(f"Errore nell'invio del messaggio di test: {e}")
