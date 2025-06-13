@@ -2,28 +2,26 @@ name: Monitor Octopus
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # esegui ogni giorno alle 8:00 UTC (10:00 italiane)
-  workflow_dispatch:      # consente anche l'avvio manuale
+    - cron: '0 7 * * *'  # Ogni giorno alle 07:00 UTC (09:00 italiane)
+  workflow_dispatch:     # Avvio manuale sempre disponibile
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 python-telegram-bot
+    - name: Install dependencies
+      run: pip install requests beautifulsoup4
 
-      - name: Run monitor script
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python monitor.py
+    - name: Run monitor script
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        CHAT_ID: ${{ secrets.CHAT_ID }}
+      run: python monitor.py
