@@ -67,3 +67,12 @@ try:
             )
 except Exception as e:
     print(f"Errore durante l'esecuzione dello script: {e}")
+    print("DEBUG: Invio messaggio di test Telegram")
+try:
+    test_message = "🔔 TEST: Il bot è attivo e funzionante. Questo è un messaggio di prova."
+    requests.post(
+        f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
+        data={'chat_id': CHAT_ID, 'text': test_message}
+    )
+except Exception as e:
+    print(f"Errore nell'invio del messaggio di test: {e}")
