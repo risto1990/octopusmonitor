@@ -1,4 +1,12 @@
 {
-  "luce": 0.1232,
-  "gas": 0.453
+  "users": {
+    /* "CHAT_ID": {
+         "luce": { "price": 0.25, "unit": "€/kWh" },
+         "gas":  { "price": 0.90, "unit": "€/Smc" }
+       } */
+  },
+  "default": {
+    "luce": { "price": 0.25, "unit": "€/kWh" },
+    "gas":  { "price": 0.90, "unit": "€/Smc" }
+  }
 }
