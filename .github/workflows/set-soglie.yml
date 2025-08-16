@@ -8,11 +8,11 @@ on:
         required: true
         type: string
       luce:
-        description: "Soglia luce in €/kWh (es. 0.25)"
+        description: "Soglia luce in €/kWh (es. 0.25 oppure 0,25)"
         required: true
         type: string
       gas:
-        description: "Soglia gas in €/Smc (es. 0.90)"
+        description: "Soglia gas in €/Smc (es. 0.90 oppure 0,90)"
         required: true
         type: string
 
@@ -29,13 +29,27 @@ jobs:
           python-version: "3.11"
 
       - name: Update soglie.json
+        env:
+          CHAT_ID: ${{ inputs.chat_id }}
+          LUCE_IN: ${{ inputs.luce }}
+          GAS_IN:  ${{ inputs.gas }}
         run: |
           python - << 'PY'
           import json, os, sys
+
+          def to_float(s):
+            # accetta "0,25" o "0.25"
+            return float(str(s).strip().replace(",", "."))
+
           path = "soglie.json"
-          chat_id = os.environ["CHAT_ID"]
-          luce = float(os.environ["LUCE"])
-          gas  = float(os.environ["GAS"])
+          chat_id = str(os.environ["CHAT_ID"]).strip()
+          try:
+            luce = to_float(os.environ["LUCE_IN"])
+            gas  = to_float(os.environ["GAS_IN"])
+          except Exception as e:
+            print("Valori non validi. Usa numeri tipo 0.25 o 0,25. Errore:", e)
+            sys.exit(1)
+
           # payload base
           data = {
             "users": {},
@@ -44,29 +58,33 @@ jobs:
               "gas":  {"price": 0.90, "unit": "€/Smc"}
             }
           }
-          if os.path.exists(path):
-            try:
-              with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            except Exception:
-              pass
+          # carica esistente se c'è
+          try:
+            with open(path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+          except Exception:
+            pass
+
           data.setdefault("users", {})
           data.setdefault("default", {
             "luce": {"price": 0.25, "unit": "€/kWh"},
             "gas":  {"price": 0.90, "unit": "€/Smc"}
           })
-          data["users"][str(chat_id)] = {
-            "luce": {"price": luce, "unit": "€/kWh"},
-            "gas":  {"price": gas,  "unit": "€/Smc"}
+
+          # aggiorna/crea l'utente
+          user_cfg = data["users"].get(chat_id) or {
+            "luce": {"price": data["default"]["luce"]["price"], "unit": "€/kWh"},
+            "gas":  {"price": data["default"]["gas"]["price"],  "unit": "€/Smc"}
           }
+          user_cfg["luce"]["price"] = float(luce)
+          user_cfg["gas"]["price"]  = float(gas)
+          data["users"][chat_id] = user_cfg
+
           with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-          print("Aggiornato soglie.json per chat_id", chat_id, "→", luce, gas)
+
+          print(f"Aggiornato soglie.json per chat_id {chat_id} → luce={luce} gas={gas}")
           PY
-        env:
-          CHAT_ID: ${{ inputs.chat_id }}
-          LUCE: ${{ inputs.luce }}
-          GAS:  ${{ inputs.gas }}
 
       - name: Commit & Push
         run: |
