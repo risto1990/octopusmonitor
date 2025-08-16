@@ -1,4 +1,7 @@
-# monitor.py  — MONITOR_VERSION: v2.2 (alert se uno sotto soglia + esito vs ultimo)
+# monitor.py  — MONITOR_VERSION: v2.3
+# - Alert se ALMENO uno sotto soglia
+# - Esito vs ULTIMA RUN (anche nello stesso giorno) + storico per data
+
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -9,8 +12,9 @@ from datetime import datetime
 # Preferisce TELEGRAM_BOT_TOKEN; altrimenti TELEGRAM_TOKEN (compatibilità)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 CHAT_ID_ENV = os.getenv("CHAT_ID")  # fallback opzionale per vecchio formato
-STORICO_FILE = "storico_prezzi.json"
-SOGLIE_FILE = "soglie.json"
+STORICO_FILE = "storico_prezzi.json"   # per data (YYYY-MM-DD)
+LAST_FILE    = "last_prices.json"      # ultima run (anche stesso giorno)
+SOGLIE_FILE  = "soglie.json"
 
 oggi = datetime.now().strftime("%Y-%m-%d")
 
@@ -39,17 +43,10 @@ def carica_soglie_raw():
         return _default_payload()
 
 def normalizza_soglie(data):
-    """
-    Supporta:
-    - Nuovo formato con users/default
-    - Vecchio formato piatto {luce: float, gas: float} (richiede CHAT_ID)
-    Ritorna (users_dict, default_dict)
-    """
     if isinstance(data, dict) and "users" in data and "default" in data:
         users = data.get("users") or {}
         default = data.get("default") or _default_payload()["default"]
         return users, default
-
     if isinstance(data, dict) and "luce" in data and "gas" in data:
         users = {}
         if CHAT_ID_ENV:
@@ -58,7 +55,6 @@ def normalizza_soglie(data):
                 "gas":  {"price": float(data["gas"]),  "unit": "€/Smc"},
             }
         return users, _default_payload()["default"]
-
     return {}, _default_payload()["default"]
 
 
@@ -128,49 +124,44 @@ def salva_storico(d):
     with open(STORICO_FILE, "w", encoding="utf-8") as f:
         json.dump(storico, f, ensure_ascii=False, indent=2)
 
-def _last_value_before(storico_dict: dict, today_key: str):
-    # ritorna (data, valore) della rilevazione precedente, o (None, None)
-    keys = sorted(k for k in storico_dict.keys() if k < today_key)
-    if not keys:
-        return None, None
-    last_key = keys[-1]
-    return last_key, storico_dict[last_key]
+def carica_last():
+    if os.path.exists(LAST_FILE):
+        try:
+            with open(LAST_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
 
-def build_esito_vs_ultimo(storico, prezzo_luce, prezzo_gas, tol=1e-6):
-    # calcola lo stato vs ultima rilevazione (invariato / ↑ / ↓ + %)
-    _, last_luce = _last_value_before(storico.get("luce", {}), oggi)
-    _, last_gas  = _last_value_before(storico.get("gas",  {}), oggi)
+def salva_last(d):
+    with open(LAST_FILE, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False)
 
-    def one(val_now, val_prev, unit):
-        if val_prev is None:
-            return f"n/d {unit}"
-        if abs(val_now - val_prev) <= tol:
-            return f"invariato {unit}"
-        if val_prev == 0:
-            # niente percentuale se precedente=0
-            arrow = "↑" if val_now > val_prev else "↓"
-            return f"{arrow} {val_now:.4f} {unit}"
-        delta_pct = (val_now - val_prev) / val_prev * 100
-        arrow = "↑" if delta_pct > 0 else "↓"
-        return f"{arrow} {abs(delta_pct):.2f}%"
-
-    luce_esito = one(prezzo_luce, last_luce, "€/kWh")
-    gas_esito  = one(prezzo_gas,  last_gas,  "€/Smc")
-    # Stringa riassuntiva
-    return f"Esito vs ultima rilevazione → 💡 {luce_esito} · 🔥 {gas_esito}"
+def esito_vs_last(prezzo_luce, prezzo_gas, last):
+    if not last:
+        return "Prima rilevazione: nessun confronto disponibile."
+    def one(now, prev, unit):
+        if prev is None: return f"n/d {unit}"
+        if now == prev: return f"invariato {unit}"
+        if prev == 0:   return f"{'↑' if now>prev else '↓'} {now:.4f} {unit}"
+        pct = (now - prev) / prev * 100
+        arrow = "↑" if pct > 0 else "↓"
+        return f"{arrow} {abs(pct):.2f}%"
+    luce_esito = one(prezzo_luce, last.get("luce"), "€/kWh")
+    gas_esito  = one(prezzo_gas,  last.get("gas"),  "€/Smc")
+    return f"Esito vs ultima run → 💡 {luce_esito} · 🔥 {gas_esito}"
 
 
 # ---------------- MAIN ----------------
 
 def main():
-    print(">>> MONITOR_VERSION v2.2 avviato")
+    print(">>> MONITOR_VERSION v2.3 avviato")
     print(f"Env: has TELEGRAM_TOKEN? {'yes' if TELEGRAM_TOKEN else 'no'}; CHAT_ID set? {'yes' if CHAT_ID_ENV else 'no'}")
 
     try:
         raw = carica_soglie_raw()
         users, default_cfg = normalizza_soglie(raw)
 
-        # Se non ci sono users ma hai CHAT_ID_ENV, crea un utente fallback
         if (not users) and CHAT_ID_ENV:
             users = {
                 str(int(CHAT_ID_ENV)): {
@@ -182,12 +173,17 @@ def main():
         prezzo_luce, prezzo_gas = estrai_prezzi()
         print(f"Prezzi attuali - Luce: {prezzo_luce} €/kWh, Gas: {prezzo_gas} €/Smc")
 
-        # Salva nello storico PRIMA del confronto (così oggi è registrato)
-        salva_storico({"luce": prezzo_luce, "gas": prezzo_gas})
-        storico = carica_storico()
-        esito_line = build_esito_vs_ultimo(storico, prezzo_luce, prezzo_gas)
+        # 1) Carica ultima run e costruisci esito
+        last = carica_last()
+        esito_line = esito_vs_last(prezzo_luce, prezzo_gas, last)
 
-        # Notifiche: inviamo se ALMENO UNO sotto soglia. Aggiungiamo l'esito come riga finale.
+        # 2) Aggiorna subito LAST per le run successive
+        salva_last({"luce": prezzo_luce, "gas": prezzo_gas, "ts": datetime.now().isoformat()})
+
+        # 3) Aggiorna anche lo storico per data (una sola voce al giorno)
+        salva_storico({"luce": prezzo_luce, "gas": prezzo_gas})
+
+        # 4) Notifiche: inviamo se ALMENO UNO sotto soglia. Aggiungiamo l'esito come riga finale.
         if not isinstance(users, dict) or not users:
             print("Nessun utente configurato -> nessuna notifica.")
         else:
@@ -212,15 +208,13 @@ def main():
                         text = "📢 Prezzi sotto la tua soglia!\n" + "\n".join(lines) + f"\n\n{esito_line}"
                         invia_telegram(chat_id, text)
                     else:
-                        # niente alert → logghiamo comunque l'esito per trasparenza
                         print(esito_line)
 
                 except Exception as e:
                     print(f"Errore su chat_id={chat_id}: {e}")
 
-        # Riepilogo settimanale (lunedì) – invariato rispetto a prima
+        # 5) Riepilogo settimanale (lunedì) — invariato
         if datetime.now().weekday() == 0:
-            # nel riepilogo settimanale lasciamo la logica esistente
             def riepilogo(storico, tipo):
                 dati = storico.get(tipo, {})
                 if not dati:
@@ -234,6 +228,7 @@ def main():
                     testo += f"📈 Variazione: {delta:+.2f}%"
                 return testo
 
+            storico = carica_storico()
             targets = list(users.keys()) if users else ([CHAT_ID_ENV] if CHAT_ID_ENV else [])
             for cid in targets:
                 invia_telegram(cid, riepilogo(storico, "luce"))
