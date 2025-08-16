@@ -1,5 +1,10 @@
 {
-  "users": {},
+  "users": {
+    "32298491": {
+      "luce": { "price": 9.99, "unit": "€/kWh" },
+      "gas":  { "price": 9.99, "unit": "€/Smc" }
+    }
+  },
   "default": {
     "luce": { "price": 0.25, "unit": "€/kWh" },
     "gas":  { "price": 0.90, "unit": "€/Smc" }
