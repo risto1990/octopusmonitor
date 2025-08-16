@@ -1,4 +1,4 @@
-# monitor.py  — MONITOR_VERSION: v2.1 (defensivo + log)
+# monitor.py  — MONITOR_VERSION: v2.2 (alert se uno sotto soglia + esito vs ultimo)
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -8,7 +8,7 @@ from datetime import datetime
 
 # Preferisce TELEGRAM_BOT_TOKEN; altrimenti TELEGRAM_TOKEN (compatibilità)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
-CHAT_ID_ENV = os.getenv("CHAT_ID")  # fallback opzionale
+CHAT_ID_ENV = os.getenv("CHAT_ID")  # fallback opzionale per vecchio formato
 STORICO_FILE = "storico_prezzi.json"
 SOGLIE_FILE = "soglie.json"
 
@@ -128,36 +128,47 @@ def salva_storico(d):
     with open(STORICO_FILE, "w", encoding="utf-8") as f:
         json.dump(storico, f, ensure_ascii=False, indent=2)
 
-def riepilogo(storico, tipo):
-    dati = storico.get(tipo, {})
-    if not dati:
-        return f"📊 Riepilogo settimanale {tipo}: nessun dato."
-    ultimi = sorted(dati.items())[-7:]
-    testo = f"📊 Riepilogo settimanale {tipo}\n"
-    for data, val in ultimi:
-        testo += f"{data}: {val:.4f} €/{'kWh' if tipo == 'luce' else 'Smc'}\n"
-    if len(ultimi) >= 2 and ultimi[0][1] != 0:
-        delta = ((ultimi[-1][1] - ultimi[0][1]) / ultimi[0][1]) * 100
-        testo += f"📈 Variazione: {delta:+.2f}%"
-    return testo
+def _last_value_before(storico_dict: dict, today_key: str):
+    # ritorna (data, valore) della rilevazione precedente, o (None, None)
+    keys = sorted(k for k in storico_dict.keys() if k < today_key)
+    if not keys:
+        return None, None
+    last_key = keys[-1]
+    return last_key, storico_dict[last_key]
+
+def build_esito_vs_ultimo(storico, prezzo_luce, prezzo_gas, tol=1e-6):
+    # calcola lo stato vs ultima rilevazione (invariato / ↑ / ↓ + %)
+    _, last_luce = _last_value_before(storico.get("luce", {}), oggi)
+    _, last_gas  = _last_value_before(storico.get("gas",  {}), oggi)
+
+    def one(val_now, val_prev, unit):
+        if val_prev is None:
+            return f"n/d {unit}"
+        if abs(val_now - val_prev) <= tol:
+            return f"invariato {unit}"
+        if val_prev == 0:
+            # niente percentuale se precedente=0
+            arrow = "↑" if val_now > val_prev else "↓"
+            return f"{arrow} {val_now:.4f} {unit}"
+        delta_pct = (val_now - val_prev) / val_prev * 100
+        arrow = "↑" if delta_pct > 0 else "↓"
+        return f"{arrow} {abs(delta_pct):.2f}%"
+
+    luce_esito = one(prezzo_luce, last_luce, "€/kWh")
+    gas_esito  = one(prezzo_gas,  last_gas,  "€/Smc")
+    # Stringa riassuntiva
+    return f"Esito vs ultima rilevazione → 💡 {luce_esito} · 🔥 {gas_esito}"
 
 
 # ---------------- MAIN ----------------
 
 def main():
-    print(">>> MONITOR_VERSION v2.1 avviato")
+    print(">>> MONITOR_VERSION v2.2 avviato")
     print(f"Env: has TELEGRAM_TOKEN? {'yes' if TELEGRAM_TOKEN else 'no'}; CHAT_ID set? {'yes' if CHAT_ID_ENV else 'no'}")
 
     try:
         raw = carica_soglie_raw()
         users, default_cfg = normalizza_soglie(raw)
-
-        # Log diagnostico per capire il formato letto
-        try:
-            print(f"soglie.json keys: {list(raw.keys())[:5] if isinstance(raw, dict) else type(raw)}")
-        except Exception:
-            pass
-        print(f"users type:{type(users).__name__} count:{len(users)}")
 
         # Se non ci sono users ma hai CHAT_ID_ENV, crea un utente fallback
         if (not users) and CHAT_ID_ENV:
@@ -167,19 +178,21 @@ def main():
                     "gas":  {"price": default_cfg["gas"]["price"],  "unit": "€/Smc"},
                 }
             }
-            print("Creato utente fallback da CHAT_ID_ENV.")
 
         prezzo_luce, prezzo_gas = estrai_prezzi()
         print(f"Prezzi attuali - Luce: {prezzo_luce} €/kWh, Gas: {prezzo_gas} €/Smc")
 
+        # Salva nello storico PRIMA del confronto (così oggi è registrato)
         salva_storico({"luce": prezzo_luce, "gas": prezzo_gas})
+        storico = carica_storico()
+        esito_line = build_esito_vs_ultimo(storico, prezzo_luce, prezzo_gas)
 
+        # Notifiche: inviamo se ALMENO UNO sotto soglia. Aggiungiamo l'esito come riga finale.
         if not isinstance(users, dict) or not users:
             print("Nessun utente configurato -> nessuna notifica.")
         else:
             for chat_id, cfg in users.items():
                 try:
-                    # super difensivo: NON accedere mai con ['luce'] senza controllare
                     luce_cfg = cfg.get("luce", {})
                     gas_cfg  = cfg.get("gas",  {})
                     if "price" not in luce_cfg or "price" not in gas_cfg:
@@ -196,13 +209,31 @@ def main():
                         lines.append(f"🔥 Gas:  {prezzo_gas:.4f} €/Smc (soglia: {gas_thr:.4f})")
 
                     if lines:
-                        invia_telegram(chat_id, "📢 Prezzi sotto la tua soglia!\n" + "\n".join(lines))
+                        text = "📢 Prezzi sotto la tua soglia!\n" + "\n".join(lines) + f"\n\n{esito_line}"
+                        invia_telegram(chat_id, text)
+                    else:
+                        # niente alert → logghiamo comunque l'esito per trasparenza
+                        print(esito_line)
+
                 except Exception as e:
                     print(f"Errore su chat_id={chat_id}: {e}")
 
-        # Riepilogo settimanale (lunedì)
+        # Riepilogo settimanale (lunedì) – invariato rispetto a prima
         if datetime.now().weekday() == 0:
-            storico = carica_storico()
+            # nel riepilogo settimanale lasciamo la logica esistente
+            def riepilogo(storico, tipo):
+                dati = storico.get(tipo, {})
+                if not dati:
+                    return f"📊 Riepilogo settimanale {tipo}: nessun dato."
+                ultimi = sorted(dati.items())[-7:]
+                testo = f"📊 Riepilogo settimanale {tipo}\n"
+                for data, val in ultimi:
+                    testo += f"{data}: {val:.4f} €/{'kWh' if tipo == 'luce' else 'Smc'}\n"
+                if len(ultimi) >= 2 and ultimi[0][1] != 0:
+                    delta = ((ultimi[-1][1] - ultimi[0][1]) / ultimi[0][1]) * 100
+                    testo += f"📈 Variazione: {delta:+.2f}%"
+                return testo
+
             targets = list(users.keys()) if users else ([CHAT_ID_ENV] if CHAT_ID_ENV else [])
             for cid in targets:
                 invia_telegram(cid, riepilogo(storico, "luce"))
