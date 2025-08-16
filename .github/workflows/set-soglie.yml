@@ -1,0 +1,77 @@
+name: Set Soglie Manuale
+
+on:
+  workflow_dispatch:
+    inputs:
+      chat_id:
+        description: "Il tuo chat_id Telegram (es. 32298491)"
+        required: true
+        type: string
+      luce:
+        description: "Soglia luce in €/kWh (es. 0.25)"
+        required: true
+        type: string
+      gas:
+        description: "Soglia gas in €/Smc (es. 0.90)"
+        required: true
+        type: string
+
+jobs:
+  update-thresholds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Update soglie.json
+        run: |
+          python - << 'PY'
+          import json, os, sys
+          path = "soglie.json"
+          chat_id = os.environ["CHAT_ID"]
+          luce = float(os.environ["LUCE"])
+          gas  = float(os.environ["GAS"])
+          # payload base
+          data = {
+            "users": {},
+            "default": {
+              "luce": {"price": 0.25, "unit": "€/kWh"},
+              "gas":  {"price": 0.90, "unit": "€/Smc"}
+            }
+          }
+          if os.path.exists(path):
+            try:
+              with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            except Exception:
+              pass
+          data.setdefault("users", {})
+          data.setdefault("default", {
+            "luce": {"price": 0.25, "unit": "€/kWh"},
+            "gas":  {"price": 0.90, "unit": "€/Smc"}
+          })
+          data["users"][str(chat_id)] = {
+            "luce": {"price": luce, "unit": "€/kWh"},
+            "gas":  {"price": gas,  "unit": "€/Smc"}
+          }
+          with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+          print("Aggiornato soglie.json per chat_id", chat_id, "→", luce, gas)
+          PY
+        env:
+          CHAT_ID: ${{ inputs.chat_id }}
+          LUCE: ${{ inputs.luce }}
+          GAS:  ${{ inputs.gas }}
+
+      - name: Commit & Push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add soglie.json
+          git commit -m "Update soglie per ${{ inputs.chat_id }} (luce=${{ inputs.luce }}, gas=${{ inputs.gas }})" || echo "Niente da commitare"
+          git push
