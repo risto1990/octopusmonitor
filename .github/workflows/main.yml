@@ -1,4 +1,4 @@
-name: Octopus Monitor
+name: Octopus Monitor (persistente)
 
 on:
   schedule:
@@ -6,13 +6,26 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+# Serve per consentire il push dei file di stato al repo
+permissions:
+  contents: write
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    env:
+      # passa uno dei due: monitor.py accetta TELEGRAM_BOT_TOKEN o TELEGRAM_TOKEN
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }} # opzionale (solo vecchio formato)
+      TZ: Europe/Rome
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true      # lascia le credenziali per git push
+          ref: ${{ github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -25,10 +38,15 @@ jobs:
           pip install requests beautifulsoup4 lxml python-telegram-bot==20.8
 
       - name: Run monitor script
-        env:
-          # usa il secret che hai già; monitor.py accetta anche TELEGRAM_TOKEN
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }} # opzionale, solo per vecchio formato
         run: |
           python monitor.py
+
+      - name: Commit & Push monitor state (last & storico)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Aggiunge solo se esistono/sono cambiati
+          git add last_prices.json storico_prezzi.json || true
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Update monitor state [skip ci]"
+          git push
