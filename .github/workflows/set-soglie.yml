@@ -8,26 +8,26 @@ on:
         required: true
         type: string
       luce:
-        description: "Soglia luce in €/kWh (es. 0.25 oppure 0,25)"
+        description: "Soglia luce €/kWh (es. 0.25 oppure 0,25)"
         required: true
         type: string
       gas:
-        description: "Soglia gas in €/Smc (es. 0.90 oppure 0,90)"
+        description: "Soglia gas €/Smc (es. 0.90 oppure 0,90)"
         required: true
         type: string
 
-# 👇 fondamentale per abilitare git push dal workflow
+# abilita il push dal workflow
 permissions:
   contents: write
 
 jobs:
   update-thresholds:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # mantiene le credenziali nel remote "origin" per il push
           persist-credentials: true
           ref: ${{ github.ref }}
 
@@ -44,15 +44,22 @@ jobs:
         run: |
           python - << 'PY'
           import json, os, sys
-          def to_float(s): return float(str(s).strip().replace(",", "."))
+
+          def to_float(s: str) -> float:
+            # accetta "0,25" o "0.25"
+            return float(str(s).strip().replace(",", "."))
+
           path = "soglie.json"
           chat_id = str(os.environ["CHAT_ID"]).strip()
+
           try:
             luce = to_float(os.environ["LUCE_IN"])
             gas  = to_float(os.environ["GAS_IN"])
           except Exception as e:
-            print("Valori non validi. Usa 0.25 o 0,25. Errore:", e); sys.exit(1)
+            print("Valori non validi. Usa 0.25 o 0,25. Errore:", e)
+            sys.exit(1)
 
+          # payload base
           data = {
             "users": {},
             "default": {
@@ -60,6 +67,8 @@ jobs:
               "gas":  {"price": 0.90, "unit": "€/Smc"}
             }
           }
+
+          # carica se esiste
           try:
             with open(path, "r", encoding="utf-8") as f:
               data = json.load(f)
@@ -72,6 +81,7 @@ jobs:
             "gas":  {"price": 0.90, "unit": "€/Smc"}
           })
 
+          # aggiorna/crea per chat_id
           user_cfg = data["users"].get(chat_id) or {
             "luce": {"price": data["default"]["luce"]["price"], "unit": "€/kWh"},
             "gas":  {"price": data["default"]["gas"]["price"],  "unit": "€/Smc"}
@@ -87,18 +97,9 @@ jobs:
           PY
 
       - name: Commit & Push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # assicura di essere su lo stesso branch della run (es. main)
-          CURRENT_BRANCH="${GITHUB_REF_NAME}"
-          git checkout "${CURRENT_BRANCH}"
-
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add soglie.json
           git commit -m "Update soglie per ${{ inputs.chat_id }} (luce=${{ inputs.luce }}, gas=${{ inputs.gas }})" || echo "Niente da commitare"
-
-          # il checkout@v4 ha già le credenziali; questo push usa il GITHUB_TOKEN con contents:write
-          git push origin "${CURRENT_BRANCH}"
+          git push
