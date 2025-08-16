@@ -1,4 +1,4 @@
-# monitor.py
+# monitor.py  — MONITOR_VERSION: v2.1 (defensivo + log)
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -6,17 +6,16 @@ import os
 import json
 from datetime import datetime
 
-# ---- Config ----
-# Preferisce TELEGRAM_BOT_TOKEN (come nel workflow). Se non c'è, usa TELEGRAM_TOKEN (compatibilità col passato).
+# Preferisce TELEGRAM_BOT_TOKEN; altrimenti TELEGRAM_TOKEN (compatibilità)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
-CHAT_ID_ENV = os.getenv("CHAT_ID")  # usato solo come fallback per vecchio formato
+CHAT_ID_ENV = os.getenv("CHAT_ID")  # fallback opzionale
 STORICO_FILE = "storico_prezzi.json"
 SOGLIE_FILE = "soglie.json"
 
 oggi = datetime.now().strftime("%Y-%m-%d")
 
 
-# ========== Utilità soglie ==========
+# ---------------- Soglie ----------------
 
 def _default_payload():
     return {
@@ -28,91 +27,81 @@ def _default_payload():
     }
 
 def carica_soglie_raw():
-    """Legge il file soglie così com'è. Se manca o non valido, torna payload di default."""
     if not os.path.exists(SOGLIE_FILE):
+        print("soglie.json non trovato: uso default in memoria.")
         return _default_payload()
     try:
         with open(SOGLIE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            data = json.load(f)
+            return data
+    except Exception as e:
+        print(f"soglie.json illeggibile ({e}): uso default in memoria.")
         return _default_payload()
 
 def normalizza_soglie(data):
     """
-    Supporta due formati:
-    1) Nuovo: {"users": {"123": {"luce":{"price":...},"gas":{"price":...}}}, "default": {...}}
-    2) Vecchio: {"luce": 0.1232, "gas": 0.453}  -> richiede CHAT_ID nell'env
-    Ritorna sempre (users_dict, default_dict)
+    Supporta:
+    - Nuovo formato con users/default
+    - Vecchio formato piatto {luce: float, gas: float} (richiede CHAT_ID)
+    Ritorna (users_dict, default_dict)
     """
-    # Nuovo formato
     if isinstance(data, dict) and "users" in data and "default" in data:
         users = data.get("users") or {}
         default = data.get("default") or _default_payload()["default"]
         return users, default
 
-    # Vecchio formato piatto
     if isinstance(data, dict) and "luce" in data and "gas" in data:
-        # Costruisco users dal CHAT_ID_ENV se presente
         users = {}
         if CHAT_ID_ENV:
             users[str(int(CHAT_ID_ENV))] = {
                 "luce": {"price": float(data["luce"]), "unit": "€/kWh"},
                 "gas":  {"price": float(data["gas"]),  "unit": "€/Smc"},
             }
-        default = _default_payload()["default"]
-        return users, default
+        return users, _default_payload()["default"]
 
-    # Altrimenti default
     return {}, _default_payload()["default"]
 
 
-# ========== Estrazione prezzi ==========
+# ---------------- Estrazione prezzi ----------------
 
 def estrai_prezzi():
-    """
-    Estrae i prezzi luce/gas dalla pagina Octopus (tariffa Fissa 12M).
-    Ritorna (prezzo_luce_float, prezzo_gas_float).
-    """
     url = "https://octopusenergy.it/le-nostre-tariffe"
     r = requests.get(url, timeout=25)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Trova il titolo/sezione "Octopus Fissa 12M"
     headings = soup.find_all(["h1", "h2", "h3", "h4"])
     sezione_fissa = next((tag for tag in headings if "Octopus Fissa 12M" in tag.get_text()), None)
     if not sezione_fissa:
-        raise ValueError("Sezione 'Octopus Fissa 12M' non trovata nella pagina.")
+        raise ValueError("Sezione 'Octopus Fissa 12M' non trovata.")
 
-    # Prende il primo div successivo con testo
     contenitore = sezione_fissa.find_next("div")
     if not contenitore:
         raise ValueError("Contenitore della sezione non trovato.")
 
     testo = contenitore.get_text(" ", strip=True)
 
-    # Regex robuste per Materia prima
-    p_luce = re.search(r"Materia\s+prima:\s*([0-9.,]+)\s*€/kWh", testo, re.IGNORECASE)
-    p_gas  = re.search(r"Materia\s+prima:\s*([0-9.,]+)\s*€/Smc", testo, re.IGNORECASE)
-    if not p_luce or not p_gas:
-        # In alcune versioni della pagina potrebbero cambiare i blocchi; tenta un fallback sull'intera pagina
-        full = soup.get_text(" ", strip=True)
-        p_luce = p_luce or re.search(r"Materia\s+prima:\s*([0-9.,]+)\s*€/kWh", full, re.IGNORECASE)
-        p_gas  = p_gas  or re.search(r"Materia\s+prima:\s*([0-9.,]+)\s*€/Smc",  full, re.IGNORECASE)
+    p_luce = re.search(r"Materia\s*prima:\s*([0-9.,]+)\s*€/kWh", testo, re.IGNORECASE)
+    p_gas  = re.search(r"Materia\s*prima:\s*([0-9.,]+)\s*€/Smc",  testo, re.IGNORECASE)
 
     if not p_luce or not p_gas:
-        raise ValueError("Prezzi non trovati (pattern cambiato?)")
+        full = soup.get_text(" ", strip=True)
+        p_luce = p_luce or re.search(r"Materia\s*prima:\s*([0-9.,]+)\s*€/kWh", full, re.IGNORECASE)
+        p_gas  = p_gas  or re.search(r"Materia\s*prima:\s*([0-9.,]+)\s*€/Smc",  full, re.IGNORECASE)
+
+    if not p_luce or not p_gas:
+        raise ValueError("Prezzi non trovati (pattern cambiato?).")
 
     prezzo_luce = float(p_luce.group(1).replace(",", "."))
     prezzo_gas  = float(p_gas.group(1).replace(",", "."))
     return prezzo_luce, prezzo_gas
 
 
-# ========== Telegram & storico ==========
+# ---------------- Telegram & Storico ----------------
 
 def invia_telegram(chat_id: str, msg: str):
-    """Invia un messaggio al chat_id indicato (str o int)."""
     if not TELEGRAM_TOKEN:
+        print("TELEGRAM_TOKEN mancante: salto invio.")
         return
     try:
         requests.post(
@@ -120,9 +109,8 @@ def invia_telegram(chat_id: str, msg: str):
             data={"chat_id": str(chat_id), "text": msg},
             timeout=25,
         )
-    except Exception:
-        # Non solleva, così il job non fallisce per un singolo invio
-        pass
+    except Exception as e:
+        print(f"Invio Telegram fallito per chat_id={chat_id}: {e}")
 
 def carica_storico():
     if os.path.exists(STORICO_FILE):
@@ -154,61 +142,71 @@ def riepilogo(storico, tipo):
     return testo
 
 
-# ========== MAIN ==========
+# ---------------- MAIN ----------------
 
 def main():
-    try:
-        if not TELEGRAM_TOKEN:
-            raise RuntimeError("Manca TELEGRAM_BOT_TOKEN (o TELEGRAM_TOKEN) nelle variabili d'ambiente.")
+    print(">>> MONITOR_VERSION v2.1 avviato")
+    print(f"Env: has TELEGRAM_TOKEN? {'yes' if TELEGRAM_TOKEN else 'no'}; CHAT_ID set? {'yes' if CHAT_ID_ENV else 'no'}")
 
-        # 1) carica soglie in qualunque formato e normalizza
+    try:
         raw = carica_soglie_raw()
         users, default_cfg = normalizza_soglie(raw)
 
-        # Se non ci sono utenti (nuovo formato) ma c'è CHAT_ID_ENV, usiamo il vecchio flusso singolo
-        if not users and CHAT_ID_ENV:
+        # Log diagnostico per capire il formato letto
+        try:
+            print(f"soglie.json keys: {list(raw.keys())[:5] if isinstance(raw, dict) else type(raw)}")
+        except Exception:
+            pass
+        print(f"users type:{type(users).__name__} count:{len(users)}")
+
+        # Se non ci sono users ma hai CHAT_ID_ENV, crea un utente fallback
+        if (not users) and CHAT_ID_ENV:
             users = {
                 str(int(CHAT_ID_ENV)): {
                     "luce": {"price": default_cfg["luce"]["price"], "unit": "€/kWh"},
                     "gas":  {"price": default_cfg["gas"]["price"],  "unit": "€/Smc"},
                 }
             }
+            print("Creato utente fallback da CHAT_ID_ENV.")
 
-        # 2) estrai prezzi
         prezzo_luce, prezzo_gas = estrai_prezzi()
-        prezzi = {"luce": prezzo_luce, "gas": prezzo_gas}
+        print(f"Prezzi attuali - Luce: {prezzo_luce} €/kWh, Gas: {prezzo_gas} €/Smc")
 
-        # 3) salva storico comune
-        salva_storico(prezzi)
+        salva_storico({"luce": prezzo_luce, "gas": prezzo_gas})
 
-        # 4) invia alert per ciascun utente se almeno uno dei due è sotto soglia
         if not isinstance(users, dict) or not users:
-            # Nessun utente configurato -> niente invii
-            print("Nessun utente configurato in soglie.json -> nessuna notifica.")
+            print("Nessun utente configurato -> nessuna notifica.")
         else:
             for chat_id, cfg in users.items():
                 try:
-                    luce_thr = float(cfg.get("luce", {}).get("price"))
-                    gas_thr  = float(cfg.get("gas",  {}).get("price"))
-                except Exception:
-                    print(f"Voce 'users' non valida per chat_id={chat_id}: {cfg}")
-                    continue
+                    # super difensivo: NON accedere mai con ['luce'] senza controllare
+                    luce_cfg = cfg.get("luce", {})
+                    gas_cfg  = cfg.get("gas",  {})
+                    if "price" not in luce_cfg or "price" not in gas_cfg:
+                        print(f"Config mancante per chat_id={chat_id}: {cfg}")
+                        continue
 
-                messaggi = []
-                if prezzo_luce < luce_thr:
-                    messaggi.append(f"💡 Prezzo luce sceso a {prezzo_luce:.4f} €/kWh (soglia: {luce_thr:.4f})")
-                if prezzo_gas < gas_thr:
-                    messaggi.append(f"🔥 Prezzo gas sceso a {prezzo_gas:.4f} €/Smc (soglia: {gas_thr:.4f})")
+                    luce_thr = float(luce_cfg["price"])
+                    gas_thr  = float(gas_cfg["price"])
 
-                if messaggi:
-                    invia_telegram(chat_id, "📢 Prezzi sotto la tua soglia!\n" + "\n".join(messaggi))
+                    lines = []
+                    if prezzo_luce < luce_thr:
+                        lines.append(f"💡 Luce: {prezzo_luce:.4f} €/kWh (soglia: {luce_thr:.4f})")
+                    if prezzo_gas < gas_thr:
+                        lines.append(f"🔥 Gas:  {prezzo_gas:.4f} €/Smc (soglia: {gas_thr:.4f})")
 
-        # 5) riepilogo settimanale (lunedì)
+                    if lines:
+                        invia_telegram(chat_id, "📢 Prezzi sotto la tua soglia!\n" + "\n".join(lines))
+                except Exception as e:
+                    print(f"Errore su chat_id={chat_id}: {e}")
+
+        # Riepilogo settimanale (lunedì)
         if datetime.now().weekday() == 0:
             storico = carica_storico()
-            for chat_id in users.keys() or ([CHAT_ID_ENV] if CHAT_ID_ENV else []):
-                invia_telegram(chat_id, riepilogo(storico, "luce"))
-                invia_telegram(chat_id, riepilogo(storico, "gas"))
+            targets = list(users.keys()) if users else ([CHAT_ID_ENV] if CHAT_ID_ENV else [])
+            for cid in targets:
+                invia_telegram(cid, riepilogo(storico, "luce"))
+                invia_telegram(cid, riepilogo(storico, "gas"))
 
         print("Controllo completato.")
 
